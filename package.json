@@ -1,0 +1,13 @@
+{
+  "name": "jarvis-root",
+  "version": "1.0.0",
+  "description": "Root configuration to start J.A.R.V.I.S. frontend and backend",
+  "scripts": {
+    "start": "concurrently \"npm run dev --prefix frontend\" \"npm run start --prefix backend\"",
+    "dev": "concurrently \"npm run dev --prefix frontend\" \"npm run start --prefix backend\"",
+    "install-all": "npm install --prefix frontend && npm install --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
