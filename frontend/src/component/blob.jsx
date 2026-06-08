@@ -565,7 +565,7 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
         setJarvisResponse("Processing protocol...");
 
         try {
-            const response = await fetch("http://localhost:4000/api/chat", {
+            const response = await fetch("https://jarvis-ai-ug9h.onrender.com/api/chat", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
