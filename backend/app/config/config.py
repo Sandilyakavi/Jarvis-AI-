@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     DEFAULT_PROVIDER: str = "groq"
     DEFAULT_MODEL: str = "llama3-8b-8192"
 
+    # Tool Calling Framework settings
+    TOOL_TIMEOUT_SECONDS: int = 10       # Max seconds a single tool may run
+    SEARCH_MAX_RESULTS: int = 5          # Default number of web search results
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

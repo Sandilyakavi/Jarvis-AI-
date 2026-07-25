@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { chatService } from "../services/api/chatService";
+import ChatInterface from "./ChatInterface";
 
 const noiseFunctions = `
   vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
@@ -70,6 +72,8 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
     const [interimTranscript, setInterimTranscript] = useState('');
     const [jarvisResponse, setJarvisResponse] = useState('');
     const [isThinking, setIsThinking] = useState(false);
+    const [messages, setMessages] = useState([]);
+    const [error, setError] = useState(null);
     const [wakeListening, setWakeListening] = useState(false);
     const [wakeDetected, setWakeDetected] = useState(false);
     const recognitionRef = useRef(null);
@@ -558,32 +562,44 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
 
     // ── AI & TTS Logic ──────────────────────────────────────────
     async function handleConversation(userText) {
-        if (!userText || userText === lastProcessedTranscriptRef.current) return;
-        lastProcessedTranscriptRef.current = userText;
+        if (!userText) return;
         
+        // For voice transcripts, avoid duplicate firing.
+        // For typed messages, we bypass this by temporarily modifying or comparing.
+        if (userText === lastProcessedTranscriptRef.current) return;
+        lastProcessedTranscriptRef.current = userText;
+
+        const newMsg = { role: "user", content: userText };
+        
+        setMessages(prev => {
+            const updated = [...prev, newMsg];
+            sendChatRequest(updated);
+            return updated;
+        });
+
+        setFinalTranscript('');
+        setInterimTranscript('');
+        setError(null);
+    }
+
+    async function sendChatRequest(messagesPayload) {
         setIsThinking(true);
-        setJarvisResponse("Processing protocol...");
-
         try {
-            const response = await fetch("https://jarvis-ai-ug9h.onrender.com/api/chat", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    message: userText
-                })
-            });
-
-            const data = await response.json();
-            const reply = data.reply || "System error in response module.";
+            const data = await chatService.sendMessage(messagesPayload);
+            const assistantMsg = data.message;
             
-            setJarvisResponse(reply);
+            setMessages(prev => [...prev, assistantMsg]);
             setIsThinking(false);
-            speak(reply);
-        } catch (error) {
-            console.error("Backend Error:", error);
-            setJarvisResponse("Connection to neural core failed, Sir.");
+            
+            if (assistantMsg && assistantMsg.content) {
+                speak(assistantMsg.content);
+            }
+        } catch (err) {
+            console.error("API Layer Error:", err);
+            setError({
+                code: err.code || "NETWORK_ERROR",
+                message: err.message || "Connection to neural core failed, Sir."
+            });
             setIsThinking(false);
         }
     }
@@ -677,62 +693,14 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
             )}
             
             {listening && (
-                <div style={{
-                    position: "fixed",
-                    bottom: 30,
-                    right: 30,
-                    width: "420px",
-                    maxHeight: "300px",
-                    padding: "20px 25px",
-                    background: "rgba(0, 15, 25, 0.65)",
-                    backdropFilter: "blur(20px)",
-                    WebkitBackdropFilter: "blur(20px)",
-                    borderBottom: "2px solid rgba(0, 255, 225, 0.4)",
-                    borderLeft: "1px solid rgba(0, 255, 225, 0.2)",
-                    clipPath: "polygon(20px 0, 100% 0, calc(100% - 20px) 100%, 0 100%, 0 20px)",
-                    boxShadow: "0 20px 50px rgba(0,0,0,0.5), inset 0 0 20px rgba(0, 255, 225, 0.05)",
-                    zIndex: 9000,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "15px",
-                    overflowY: "auto"
-                }}>
-                    {/* User Text Section */}
-                    <div>
-                        <div style={{ color: "#00ffe1", fontSize: 10, letterSpacing: "2px", opacity: 0.7, marginBottom: 8 }}>▸ USER_INPUT</div>
-                        <div style={{ color: "rgba(255,255,255,0.9)", fontSize: "16px", lineHeight: "1.4" }}>
-                            {transcript ? (
-                                <>
-                                    <span style={{ color: "#00ffe1", marginRight: "8px" }}>›</span>
-                                    <span>{finalTranscript}</span>
-                                    {interimTranscript && <span style={{ opacity: 0.5, fontStyle: 'italic' }}>{interimTranscript}</span>}
-                                </>
-                            ) : (
-                                <span style={{ opacity: 0.3, fontSize: 14 }}>Listening...</span>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Divider */}
-                    <div style={{ height: "1px", background: "rgba(0, 255, 225, 0.15)", width: "100%" }} />
-
-                    {/* JARVIS Response Section */}
-                    <div style={{ opacity: jarvisResponse || isThinking ? 1 : 0, transition: "all 0.5s" }}>
-                        <div style={{ color: "#ffaa00", fontSize: 10, letterSpacing: "2px", opacity: 0.7, marginBottom: 8 }}>
-                            {isThinking ? "▸ ANALYZING..." : "▸ J.A.R.V.I.S"}
-                        </div>
-                        <div style={{ 
-                            color: isThinking ? "#00ffe1" : "#fff", 
-                            fontSize: "16px", 
-                            lineHeight: "1.5", 
-                            fontFamily: "'Share Tech Mono', monospace",
-                            textShadow: isThinking ? "0 0 8px rgba(0,255,225,0.5)" : "none"
-                        }}>
-                            {jarvisResponse}
-                            {isThinking && <span className="thinking-cursor" style={{ marginLeft: 5 }}>_</span>}
-                        </div>
-                    </div>
-                </div>
+                <ChatInterface
+                    messages={messages}
+                    isThinking={isThinking}
+                    error={error}
+                    onSendMessage={handleConversation}
+                    theme={blobTheme}
+                    transcript={transcript}
+                />
             )}
 
             <div style={{ position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, zIndex: 500 }}>

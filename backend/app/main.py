@@ -10,6 +10,10 @@ from app.services.ai.exceptions import AIServiceException
 from app.services.ai.manager import AIManager
 from app.schemas.chat import StandardErrorResponse, ErrorDetail
 
+# Tool registration — importing these packages triggers ToolRegistry.register()
+# Add one import line per new tool package. No other changes required.
+import app.services.tools.search  # noqa: F401 — registers "web_search"
+
 # Configure Logging
 logging.basicConfig(
     level=logging.INFO if not settings.DEBUG else logging.DEBUG,

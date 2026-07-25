@@ -35,11 +35,28 @@ class GroqProvider(BaseProvider):
             
             content = response.choices[0].message.content or ""
             role = response.choices[0].message.role or "assistant"
-            
+
+            # Capture tool calls if the model requested any
+            raw_tool_calls = response.choices[0].message.tool_calls
+            tool_calls = None
+            if raw_tool_calls:
+                tool_calls = [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in raw_tool_calls
+                ]
+
             return {
                 "content": content,
                 "role": role,
-                "model_used": response.model
+                "model_used": response.model,
+                "tool_calls": tool_calls,  # None if no tool call; list otherwise
             }
             
         except APIConnectionError as e:
