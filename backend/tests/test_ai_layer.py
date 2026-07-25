@@ -1,5 +1,6 @@
 import pytest
 from typing import List, Dict, Any, AsyncGenerator
+# pyrefly: ignore [missing-import]
 from fastapi.testclient import TestClient
 from app.main import app
 from app.providers.base_provider import BaseProvider
