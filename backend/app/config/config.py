@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     # CORS Settings
     ALLOWED_ORIGINS: str | List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
-    # External APIs (for future sprints)
+    # External APIs and AI settings
     GROQ_API_KEY: str = ""
+    DEFAULT_PROVIDER: str = "groq"
+    DEFAULT_MODEL: str = "llama3-8b-8192"
 
     model_config = SettingsConfigDict(
         env_file=".env",
