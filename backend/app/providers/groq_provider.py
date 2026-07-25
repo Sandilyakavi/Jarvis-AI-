@@ -1,6 +1,5 @@
 import logging
 from typing import List, Dict, Any, AsyncGenerator
-# pyrefly: ignore [missing-import]
 from groq import AsyncGroq, APIConnectionError, APIStatusError
 from app.providers.base_provider import BaseProvider
 from app.services.ai.exceptions import ProviderConnectionError, ProviderAPIError

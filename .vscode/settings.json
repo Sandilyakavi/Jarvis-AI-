@@ -1,9 +1,13 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
+  "python.defaultInterpreterPath": "/Users/mac/Desktop/JARVIS/backend/.venv/bin/python",
   "python.analysis.extraPaths": [
-    "${workspaceFolder}/backend"
+    "/Users/mac/Desktop/JARVIS/backend"
   ],
+  "python.analysis.venvPath": "/Users/mac/Desktop/JARVIS/backend",
+  "python.analysis.venv": ".venv",
   "python.terminal.activateEnvironment": true,
+  "python.analysis.typeCheckingMode": "off",
+  "pyrefly.pythonInterpreter": "/Users/mac/Desktop/JARVIS/backend/.venv/bin/python",
   "[python]": {
     "editor.defaultFormatter": "ms-python.python"
   }

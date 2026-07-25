@@ -1,0 +1,8 @@
+[tool.pyrefly]
+# Point Pyrefly to the virtual environment so it finds installed packages
+python_interpreter = ".venv/bin/python"
+venv_path = ".venv"
+
+# Silence missing-import errors for packages that are installed in .venv
+# but not visible to static analysis without the interpreter
+ignore_missing_imports = true
