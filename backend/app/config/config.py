@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # External APIs and AI settings
     GROQ_API_KEY: str = ""
     DEFAULT_PROVIDER: str = "groq"
-    DEFAULT_MODEL: str = "llama3-8b-8192"
+    DEFAULT_MODEL = "llama-3.1-8b-instant"
 
     # Tool Calling Framework settings
     TOOL_TIMEOUT_SECONDS: int = 10       # Max seconds a single tool may run

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, cast
 from groq import AsyncGroq, APIConnectionError, APIStatusError
 from app.providers.base_provider import BaseProvider
 from app.services.ai.exceptions import ProviderConnectionError, ProviderAPIError
@@ -26,8 +26,8 @@ class GroqProvider(BaseProvider):
     ) -> Dict[str, Any]:
         try:
             logger.debug(f"Sending chat request to Groq using model: {model}")
-            response = await self.client.chat.completions.create(
-                messages=messages, # type: ignore
+            response = await self.client.chat.completions.create(  # type: ignore
+                messages=cast(Any, messages),
                 model=model,
                 temperature=temperature,
                 **kwargs
@@ -80,8 +80,8 @@ class GroqProvider(BaseProvider):
         # Yielding a single block for compatibility during Day 2, or raising not implemented.
         # Let's yield a standard chunk to keep the signature functional.
         try:
-            response = await self.client.chat.completions.create(
-                messages=messages, # type: ignore
+            response = await self.client.chat.completions.create(  # type: ignore
+                messages=cast(Any, messages),
                 model=model,
                 temperature=temperature,
                 stream=True,
@@ -108,8 +108,8 @@ class GroqProvider(BaseProvider):
         """
         try:
             # Low token request to verify availability
-            await self.client.chat.completions.create(
-                messages=[{"role": "user", "content": "ping"}],
+            await self.client.chat.completions.create(  # type: ignore
+                messages=cast(Any, [{"role": "user", "content": "ping"}]),
                 model="llama3-8b-8192",
                 max_tokens=1
             )
