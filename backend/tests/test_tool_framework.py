@@ -32,6 +32,8 @@ from app.services.tools.exceptions import (
 from app.services.tools.search.search_tool import SearchTool
 from app.services.tools.search.search_provider import BaseSearchProvider, SearchResult
 from app.services.tools.search.duckduckgo_provider import DuckDuckGoProvider
+from app.services.tools.search.tavily_provider import TavilyProvider
+import httpx
 
 # ── Provider / AI Manager imports ──────────────────────────────────────────
 from app.providers.base_provider import BaseProvider
@@ -655,3 +657,403 @@ class TestAIManagerToolCallIntegration:
         )
         assert set(result.keys()) == {"message", "provider", "model"}
         assert set(result["message"].keys()) == {"role", "content"}
+
+
+# ===========================================================================
+# 7. TavilyProvider Tests
+# ===========================================================================
+
+
+class TestTavilyProvider:
+    """Comprehensive test suite for TavilyProvider."""
+
+    _SAMPLE_TAVILY_RESPONSE = {
+        "query": "artificial intelligence latest developments",
+        "results": [
+            {
+                "title": "AI Breakthroughs in 2026",
+                "url": "https://example.com/ai-2026",
+                "content": "Researchers have announced new advances in autonomous reasoning.",
+                "score": 0.98,
+            },
+            {
+                "title": "Next-Gen LLM Architectures",
+                "url": "https://example.com/next-gen-llm",
+                "snippet": "Novel state space and attention hybrids show high efficiency.",
+                "score": 0.92,
+            },
+        ],
+        "response_time": 0.42,
+    }
+
+    @pytest.mark.anyio
+    async def test_tavily_search_success_and_mapping(self):
+        """Tavily search returns valid SearchResult list mapped properly."""
+        provider = TavilyProvider(api_key="tvly-test-valid-key")
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = self._SAMPLE_TAVILY_RESPONSE
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            results = await provider.search(query="artificial intelligence", max_results=5)
+
+            assert len(results) == 2
+            assert isinstance(results[0], SearchResult)
+            assert results[0].title == "AI Breakthroughs in 2026"
+            assert results[0].url == "https://example.com/ai-2026"
+            assert "autonomous reasoning" in results[0].snippet
+
+            # Check fallback to 'snippet' field if 'content' is not primary
+            assert results[1].title == "Next-Gen LLM Architectures"
+            assert "attention hybrids" in results[1].snippet
+
+            # Verify request payload sent to Tavily
+            call_kwargs = mock_post.call_args.kwargs
+            payload = call_kwargs["json"]
+            assert payload["api_key"] == "tvly-test-valid-key"
+            assert payload["query"] == "artificial intelligence"
+            assert payload["max_results"] == 5
+
+    @pytest.mark.anyio
+    async def test_tavily_search_empty_results(self):
+        """Tavily search returns empty list when API provides zero results."""
+        provider = TavilyProvider(api_key="tvly-test-valid-key")
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": []}
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            results = await provider.search(query="obscure query", max_results=5)
+            assert results == []
+
+    @pytest.mark.anyio
+    async def test_tavily_missing_api_key_raises(self):
+        """Instantiating or calling Tavily search with empty API key raises ValueError."""
+        provider = TavilyProvider(api_key="")
+
+        with pytest.raises(ValueError) as exc_info:
+            await provider.search(query="test")
+
+        assert "Tavily API key is not configured" in str(exc_info.value)
+        # Ensure error does not leak or display secrets
+        assert "tvly" not in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_tavily_auth_error_401(self):
+        """HTTP 401 returns clean authentication failure without leaking key."""
+        provider = TavilyProvider(api_key="tvly-invalid-key")
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 401
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            with pytest.raises(RuntimeError) as exc_info:
+                await provider.search(query="test")
+
+            assert "authentication failed" in str(exc_info.value).lower()
+            assert "tvly-invalid-key" not in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_tavily_rate_limit_429(self):
+        """HTTP 429 returns rate limit error message."""
+        provider = TavilyProvider(api_key="tvly-test-key")
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 429
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            with pytest.raises(RuntimeError) as exc_info:
+                await provider.search(query="test")
+
+            assert "rate limit exceeded" in str(exc_info.value).lower()
+
+    @pytest.mark.anyio
+    async def test_tavily_server_error_500(self):
+        """HTTP 500 returns clean HTTP error message."""
+        provider = TavilyProvider(api_key="tvly-test-key")
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 500
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            with pytest.raises(RuntimeError) as exc_info:
+                await provider.search(query="test")
+
+            assert "HTTP error status: 500" in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_tavily_timeout_handling(self):
+        """httpx.TimeoutException is wrapped into TimeoutError."""
+        provider = TavilyProvider(api_key="tvly-test-key")
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.side_effect = httpx.TimeoutException("Connection timed out")
+
+            with pytest.raises(TimeoutError) as exc_info:
+                await provider.search(query="test")
+
+            assert "timed out" in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_tavily_network_error_handling(self):
+        """httpx.RequestError is wrapped into RuntimeError."""
+        provider = TavilyProvider(api_key="tvly-test-key")
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.side_effect = httpx.ConnectError("Connection refused")
+
+            with pytest.raises(RuntimeError) as exc_info:
+                await provider.search(query="test")
+
+            assert "Network error" in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_search_tool_integration_with_tavily(self):
+        """SearchTool executes properly when using TavilyProvider."""
+        provider = TavilyProvider(api_key="tvly-test-key")
+        tool = SearchTool(provider=provider)
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = self._SAMPLE_TAVILY_RESPONSE
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+
+            result = await tool.execute(query="artificial intelligence")
+
+            assert result.success is True
+            assert result.tool_name == "web_search"
+            assert len(result.data) == 2
+            assert "AI Breakthroughs in 2026" in result.formatted_output
+
+# ===========================================================================
+# 8. Tool-Selection Behavior Tests (System Prompt + AIManager Integration)
+# ===========================================================================
+
+
+class _FreshnessAwareAIProvider(BaseProvider):
+    """
+    Mock provider that inspects the user message for freshness keywords and
+    decides whether to issue a tool call.
+
+    Simulates the expected model behavior after the system-prompt enhancement:
+    - Freshness-sensitive queries -> return a web_search tool_call on first call.
+    - Stable general-knowledge queries -> return a direct answer (no tool_call).
+    """
+
+    def __init__(self):
+        self._call_count = 0
+        self._system_prompt_seen = ""
+        self._tool_result_seen = None
+
+    _FRESHNESS_KEYWORDS = [
+        "latest", "current", "recent", "today", "newest",
+        "up-to-date", "just launched", "recently released",
+        "breaking", "trending", "news", "update",
+    ]
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        self._call_count += 1
+
+        # Capture the system prompt from the first message
+        if messages and messages[0].get("role") == "system":
+            self._system_prompt_seen = messages[0]["content"]
+
+        # Extract the user message text
+        user_text = ""
+        for msg in messages:
+            if msg.get("role") == "user":
+                user_text = msg["content"].lower()
+
+        # Check if any tool result messages are present (passthrough validation)
+        for msg in messages:
+            if msg.get("role") == "tool":
+                self._tool_result_seen = msg["content"]
+
+        # On the first call, decide whether to issue a tool call
+        if self._call_count == 1:
+            is_freshness = any(kw in user_text for kw in self._FRESHNESS_KEYWORDS)
+            if is_freshness:
+                return {
+                    "content": "",
+                    "role": "assistant",
+                    "model_used": model,
+                    "tool_calls": [
+                        {
+                            "id": "call_fresh_001",
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": json.dumps({"query": user_text}),
+                            },
+                        }
+                    ],
+                }
+            else:
+                # No tool call for stable questions
+                return {
+                    "content": "Photosynthesis is the process by which plants convert sunlight into energy.",
+                    "role": "assistant",
+                    "model_used": model,
+                    "tool_calls": None,
+                }
+
+        # Second call (post-tool): return the final answer incorporating tool results
+        return {
+            "content": "Based on the latest web search results, here is the current information.",
+            "role": "assistant",
+            "model_used": model,
+            "tool_calls": None,
+        }
+
+    async def stream_chat(self, *args, **kwargs) -> AsyncGenerator[Dict[str, Any], None]:
+        yield {"content": "", "role": "assistant", "model_used": "mock"}
+
+    async def health_check(self) -> bool:
+        return True
+
+
+class TestToolSelectionBehavior:
+    """
+    Validates that the system prompt instructs the AI to call web_search for
+    freshness-sensitive queries and to skip it for stable/general-knowledge queries.
+    """
+
+    def setup_method(self):
+        ProviderRegistry.register("freshness_test_provider", _FreshnessAwareAIProvider)
+        self._backup_tools = dict(ToolRegistry._tools)
+        self._backup_instances = dict(ToolRegistry._instances)
+        ToolRegistry.clear()
+
+        mock_search_tool = SearchTool(provider=_MockSearchProvider())
+        ToolRegistry._tools["web_search"] = SearchTool
+        ToolRegistry._instances["web_search"] = mock_search_tool
+
+    def teardown_method(self):
+        ToolRegistry._tools = self._backup_tools
+        ToolRegistry._instances = self._backup_instances
+        ProviderRegistry._instances.pop("freshness_test_provider", None)
+
+    @pytest.mark.anyio
+    async def test_freshness_query_triggers_web_search(self):
+        """
+        A query like 'What is the latest model launched by OpenAI?' must result
+        in the AI requesting a web_search tool call.
+        """
+        mock_provider = _FreshnessAwareAIProvider()
+        ProviderRegistry._instances["freshness_test_provider"] = mock_provider
+
+        manager = AIManager()
+        result = await manager.chat(
+            messages=[{"role": "user", "content": "What is the latest model launched by OpenAI?"}],
+            provider="freshness_test_provider",
+            model="mock-model",
+        )
+
+        # Provider should have been called twice: tool call + final answer
+        assert mock_provider._call_count == 2
+        # Final answer should be the post-tool response
+        assert "web search results" in result["message"]["content"].lower()
+
+    @pytest.mark.anyio
+    async def test_stable_query_skips_web_search(self):
+        """
+        A stable/general-knowledge query like 'What is photosynthesis?' must NOT
+        trigger a web_search tool call.
+        """
+        mock_provider = _FreshnessAwareAIProvider()
+        ProviderRegistry._instances["freshness_test_provider"] = mock_provider
+
+        manager = AIManager()
+        result = await manager.chat(
+            messages=[{"role": "user", "content": "What is photosynthesis?"}],
+            provider="freshness_test_provider",
+            model="mock-model",
+        )
+
+        # Provider should have been called only ONCE — no tool call loop
+        assert mock_provider._call_count == 1
+        assert "photosynthesis" in result["message"]["content"].lower()
+
+    @pytest.mark.anyio
+    async def test_tool_results_are_passed_back_to_provider(self):
+        """
+        When web_search is invoked, the tool results must be appended to the
+        conversation and sent to the provider on the follow-up call.
+        """
+        mock_provider = _FreshnessAwareAIProvider()
+        ProviderRegistry._instances["freshness_test_provider"] = mock_provider
+
+        manager = AIManager()
+        await manager.chat(
+            messages=[{"role": "user", "content": "What are the latest news in AI?"}],
+            provider="freshness_test_provider",
+            model="mock-model",
+        )
+
+        # The provider's second call should have received tool result messages
+        assert mock_provider._tool_result_seen is not None
+        assert len(mock_provider._tool_result_seen) > 0
+
+    def test_system_prompt_contains_freshness_tool_instructions(self):
+        """
+        The SYSTEM_PROMPT must contain explicit freshness-keyword-based
+        tool-selection rules (not just generic tool description).
+        """
+        from app.config import settings
+
+        prompt = settings.SYSTEM_PROMPT.lower()
+
+        # Must reference web_search tool
+        assert "web_search" in prompt
+
+        # Must contain key freshness trigger words
+        for keyword in ["latest", "current", "recent", "today", "newest"]:
+            assert keyword in prompt, f"Freshness keyword '{keyword}' missing from system prompt"
+
+        # Must instruct to call BEFORE answering
+        assert "before answering" in prompt
+
+        # Must instruct NOT to search for stable knowledge
+        assert "do not call web_search" in prompt.replace("\n", " ")
+
+    @pytest.mark.anyio
+    async def test_existing_tool_loop_still_works_with_new_prompt(self):
+        """
+        The existing tool-call loop must continue to function identically
+        with the updated system prompt.
+        """
+        mock_provider = _MockAIProvider(simulate_tool_call=True)
+        ProviderRegistry.register("mock_tool_provider", _MockAIProvider)
+        ProviderRegistry._instances["mock_tool_provider"] = mock_provider
+
+        manager = AIManager()
+        result = await manager.chat(
+            messages=[{"role": "user", "content": "What's new in Python 3.13?"}],
+            provider="mock_tool_provider",
+            model="mock-model",
+        )
+
+        assert result["message"]["role"] == "assistant"
+        assert result["message"]["content"] is not None
+        assert mock_provider._call_count == 2  # tool call + final answer
+        assert set(result.keys()) == {"message", "provider", "model"}

@@ -48,8 +48,11 @@ class AIManager:
             # 2. Retrieve provider instance from the registry
             provider_instance = ProviderRegistry.get_provider(selected_provider)
 
-            # 3. Build initial message list (mutable copy)
-            conversation: List[Dict[str, str]] = list(messages)
+            # 3. Build initial message list (with system prompt injected if not present)
+            conversation: List[Dict[str, str]] = []
+            if not messages or messages[0].get("role") != "system":
+                conversation.append({"role": "system", "content": settings.SYSTEM_PROMPT})
+            conversation.extend(messages)
 
             # 4. First provider call — pass tool schemas if any are registered
             call_kwargs: Dict[str, Any] = dict(kwargs)

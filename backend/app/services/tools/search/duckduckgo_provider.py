@@ -47,6 +47,7 @@ class DuckDuckGoProvider(BaseSearchProvider):
             Exception: On network failure or DuckDuckGo API unavailability.
         """
         import asyncio
+        # pyrefly: ignore [missing-import]
         from duckduckgo_search import DDGS
 
         effective_max = min(max_results, 10)  # Safety cap

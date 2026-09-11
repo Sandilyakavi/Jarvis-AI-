@@ -53,9 +53,14 @@ class SearchTool(BaseTool):
                       Injecting a custom provider is useful for testing.
         """
         if provider is None:
-            # Lazy import to avoid circular issues and allow provider swap
-            from app.services.tools.search.duckduckgo_provider import DuckDuckGoProvider
-            provider = DuckDuckGoProvider()
+            # Resolve provider from configuration, defaulting to Tavily
+            active_provider = getattr(settings, "SEARCH_PROVIDER", "tavily").lower()
+            if active_provider == "duckduckgo":
+                from app.services.tools.search.duckduckgo_provider import DuckDuckGoProvider
+                provider = DuckDuckGoProvider()
+            else:
+                from app.services.tools.search.tavily_provider import TavilyProvider
+                provider = TavilyProvider()
 
         self._provider: BaseSearchProvider = provider
         self._max_results: int = min(

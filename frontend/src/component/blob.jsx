@@ -80,6 +80,8 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
     const wakeRef = useRef(null);
     const listeningRef = useRef(false);
     const lastProcessedTranscriptRef = useRef(''); // Prevent duplicate processing
+    const utteranceRef = useRef(null); // Prevent garbage collection of SpeechSynthesisUtterance
+    const voicesRef = useRef([]); // Cached browser speech synthesis voices
 
     // The GROQ API key is now securely handled by the backend server.
 
@@ -94,9 +96,23 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
     }, [blobSize, blobTheme, isDraggingMode, blobPosition, listening]);
 
     useEffect(() => {
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            const updateVoices = () => {
+                const available = window.speechSynthesis.getVoices();
+                if (available && available.length > 0) {
+                    voicesRef.current = available;
+                }
+            };
+            updateVoices();
+            window.speechSynthesis.onvoiceschanged = updateVoices;
+        }
+
         return () => {
             recognitionRef.current?.stop();
             wakeRef.current?.stop();
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+            }
         };
     }, []);
 
@@ -561,21 +577,63 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
     }
 
     // ── AI & TTS Logic ──────────────────────────────────────────
+    // Modular phonetic dictionary for TTS pronunciation adjustments.
+    // Applied ONLY to SpeechSynthesisUtterance audio; visual text is never modified.
+    const TTS_PRONUNCIATION_MAP = {
+        "Sandilya Kavi": "Sahn-dill-yah Kah-vee",
+        "Sandilya": "Sahn-dill-yah",
+        "Kavi": "Kah-vee",
+    };
+
+    function applyPhoneticPronunciations(text) {
+        if (!text) return '';
+        let processed = text;
+        // Ensure longer phrases (e.g. "Sandilya Kavi") are replaced before individual words
+        const sortedEntries = Object.entries(TTS_PRONUNCIATION_MAP).sort(
+            (a, b) => b[0].length - a[0].length
+        );
+        for (const [original, phonetic] of sortedEntries) {
+            const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+            processed = processed.replace(regex, phonetic);
+        }
+        return processed;
+    }
+
+    function cleanMarkdownForSpeech(text) {
+        if (!text) return '';
+        const strippedMarkdown = text
+            .replace(/\*\*(.*?)\*\*/g, '$1') // remove bold
+            .replace(/\*(.*?)\*/g, '$1')     // remove italic
+            .replace(/__(.*?)__/g, '$1')     // remove bold
+            .replace(/_(.*?)_/g, '$1')       // remove italic
+            .replace(/`{1,3}[^`]*`{1,3}/g, '') // remove inline / block code
+            .replace(/#+\s*(.*?)\n/g, '$1. ') // headings
+            .replace(/\[(.*?)\]\(.*?\)/g, '$1') // links
+            .replace(/^[*-]\s+/gm, '')       // list bullets
+            .replace(/\n+/g, ' ')           // newlines to space
+            .trim();
+
+        return applyPhoneticPronunciations(strippedMarkdown);
+    }
+
     async function handleConversation(userText) {
-        if (!userText) return;
+        if (!userText || isThinking) return;
+
+        // Cancel any currently speaking audio when a new request is submitted
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            try { window.speechSynthesis.cancel(); } catch (e) {}
+        }
         
         // For voice transcripts, avoid duplicate firing.
-        // For typed messages, we bypass this by temporarily modifying or comparing.
         if (userText === lastProcessedTranscriptRef.current) return;
         lastProcessedTranscriptRef.current = userText;
 
         const newMsg = { role: "user", content: userText };
+        const updatedMessages = [...messages, newMsg];
         
-        setMessages(prev => {
-            const updated = [...prev, newMsg];
-            sendChatRequest(updated);
-            return updated;
-        });
+        setMessages(updatedMessages);
+        sendChatRequest(updatedMessages);
 
         setFinalTranscript('');
         setInterimTranscript('');
@@ -605,25 +663,71 @@ export default function PlasmaSphere({ blobTheme = 'amber', blobSize = 1.0, blob
     }
 
     function speak(text) {
-        if (!window.speechSynthesis) return;
-        window.speechSynthesis.cancel(); // Stop current speech
+        if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+            console.warn("[TTS] SpeechSynthesis API not supported in this browser environment.");
+            return;
+        }
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        
-        // Find the most humanoid voice
-        const voices = window.speechSynthesis.getVoices();
-        const preferredVoice = voices.find(v => 
-            v.name.includes("Neural") || 
-            v.name.includes("Google US English") || 
-            v.name.includes("Samantha") ||
-            v.name.includes("Daniel")
-        ) || voices[0];
+        try {
+            // Cancel any pending speech and ensure synthesis engine is not paused
+            window.speechSynthesis.cancel();
+            if (window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+            }
 
-        utterance.voice = preferredVoice;
-        utterance.rate = 1.05; // Slightly faster for efficiency
-        utterance.pitch = 0.95; // Slightly lower for a more mature sci-fi tone
-        
-        window.speechSynthesis.speak(utterance);
+            const cleanText = cleanMarkdownForSpeech(text);
+            if (!cleanText) return;
+
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utteranceRef.current = utterance; // Prevent garbage collection in Chrome/WebKit
+
+            // Resolve voices from cache or direct query
+            const voices = voicesRef.current.length > 0 
+                ? voicesRef.current 
+                : window.speechSynthesis.getVoices();
+
+            if (voices && voices.length > 0) {
+                const preferredVoice = voices.find(v => 
+                    v.name.includes("Daniel") || 
+                    v.name.includes("Arthur") ||
+                    v.name.includes("Oliver") ||
+                    v.name.includes("Google UK English Male") ||
+                    v.name.includes("en-GB") ||
+                    v.name.includes("Neural") || 
+                    v.name.includes("Samantha") ||
+                    v.name.includes("Google US English")
+                ) || voices.find(v => v.lang && v.lang.startsWith("en")) || voices[0];
+
+                if (preferredVoice) {
+                    utterance.voice = preferredVoice;
+                }
+            }
+
+            utterance.rate = 1.0;
+            utterance.pitch = 0.95;
+
+            utterance.onend = () => {
+                utteranceRef.current = null;
+            };
+
+            utterance.onerror = (e) => {
+                if (e.error !== 'interrupted' && e.error !== 'canceled') {
+                    console.warn("[TTS] Speech synthesis error:", e.error);
+                }
+                utteranceRef.current = null;
+            };
+
+            // Small delay ensures previous cancel() is cleared by the browser audio pipeline
+            setTimeout(() => {
+                if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                    window.speechSynthesis.resume();
+                    window.speechSynthesis.speak(utterance);
+                }
+            }, 30);
+
+        } catch (e) {
+            console.error("[TTS] Speech generation error:", e);
+        }
     }
 
     async function toggleMic() {
